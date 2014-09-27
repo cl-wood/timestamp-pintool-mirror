@@ -13,6 +13,9 @@
 #include <iostream>
 #include <fstream>
 #include <list>
+#include <vector>
+#include <tuple>
+
 using namespace std;
 
 /* ================================================================== */
@@ -25,6 +28,8 @@ UINT threadCount = 0;     //total number of threads, including main thread
 
 ofstream OutFile;
 list<UINT64> counter_checks;
+vector<tuple<string, SYM> > functions;
+
 
 /* ===================================================================== */
 // Command line switches
@@ -80,6 +85,16 @@ VOID watch_clocks(UINT64 rdtsc_val)
 	cout << "rdtsc reads:\t" << rdtsc_val << endl;
 }
 
+
+/*
+	Always change the return value of GetTickCount to 0.
+ */
+VOID modGetTickCount(ADDRINT* ret)
+{
+	cout << "GetTickCount() = " << *ret << endl;
+	*ret = 0;
+}
+
 /* ===================================================================== */
 // Instrumentation callbacks
 /* ===================================================================== */
@@ -111,6 +126,57 @@ VOID Trace(TRACE trace, VOID *v)
 		}
 	
 	}
+}
+
+/*
+	For each routine called, check to see if the routine is of interest,
+	and if so, insert analysis code.
+ */
+VOID Routine(RTN rtn, VOID *)
+{
+	string routine_name = RTN_Name(rtn);
+	if (routine_name.find("GetTickCount") != string::npos)
+	{
+		RTN_Open(rtn);
+		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modGetTickCount, 
+					   IARG_FUNCRET_EXITPOINT_REFERENCE,
+					   //IARG_RETURN_REGS, 0,
+					   IARG_END);
+		RTN_Close(rtn);
+	}
+	else if (routine_name.find("LoadLibrary") != string::npos)
+	{
+		cout << "HERE" << RTN_Name(rtn) << endl;
+	}
+
+}
+
+// This routine is executed for each image.
+VOID ImageLoad(IMG img, VOID *)
+{
+	for(SYM sym= IMG_RegsymHead(img); SYM_Valid(sym); sym = SYM_Next(sym))
+	{
+		//functions.push_back(make_tuple(SYM_Name(sym), sym));
+
+		if (SYM_Name(sym).find("GetTickCount") != string::npos)
+		{
+
+			functions.push_back(make_tuple(SYM_Name(sym), sym));
+			cout << SYM_Name(sym) << " IMG: " << IMG_Name(img) <<
+				" ADDR: " << hexstr(SYM_Address(sym)) << endl;
+		}
+	}
+
+    RTN rtn = RTN_FindByName(img, "GetTickCount");
+    //cout << "Here\t" <<endl;//<< RTN_Name(rtn) << endl;
+
+    if ( RTN_Valid( rtn ))
+    {
+		OutFile.flush();
+        RTN_Open(rtn);
+
+        RTN_Close(rtn);
+    }
 }
 
 /*!
@@ -163,6 +229,8 @@ int main(int argc, char *argv[])
     {
         return Usage();
     }
+
+	PIN_InitSymbols();
     
     string fileName = KnobOutputFile.Value();
 
@@ -173,10 +241,13 @@ int main(int argc, char *argv[])
     if (KnobCount)
     {
         // Register function to be called to instrument traces
-        TRACE_AddInstrumentFunction(Trace, 0);
+        //TRACE_AddInstrumentFunction(Trace, 0);
 
         // Register function to be called for every thread before it starts running
-        PIN_AddThreadStartFunction(ThreadStart, 0);
+        //PIN_AddThreadStartFunction(ThreadStart, 0);
+
+		RTN_AddInstrumentFunction(Routine, 0);
+		//IMG_AddInstrumentFunction(ImageLoad, 0);
 
         // Register function to be called when the application exits
         PIN_AddFiniFunction(Fini, 0);
