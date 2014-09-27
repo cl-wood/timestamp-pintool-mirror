@@ -25,6 +25,8 @@ using namespace std;
 UINT insCount = 0;        //number of dynamically executed instructions
 UINT bblCount = 0;        //number of dynamically executed basic blocks
 UINT threadCount = 0;     //total number of threads, including main thread
+UINT num_GetTickCount = 0;
+BOOL in_main_executable = false;
 
 ofstream OutFile;
 list<UINT64> counter_checks;
@@ -39,7 +41,7 @@ KNOB<BOOL>   KnobCount(KNOB_MODE_WRITEONCE,  "pintool",
     "count", "1", "count instructions, basic blocks and threads in the application");
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
-    "o", "instructions.out", "specify output file name");
+    "o", "analysis.out", "specify output file name");
 
 /* ===================================================================== */
 // Utilities
@@ -82,17 +84,23 @@ VOID printIns(string insDis)
 VOID watch_clocks(UINT64 rdtsc_val)
 {
 	counter_checks.push_back(rdtsc_val);
-	cout << "rdtsc reads:\t" << rdtsc_val << endl;
+	//cout << "rdtsc reads:\t" << rdtsc_val << endl;
 }
 
 
 /*
-	Always change the return value of GetTickCount to 0.
+	Always change the return value of GetTickCount() to 0.
  */
 VOID modGetTickCount(ADDRINT* ret)
 {
-	cout << "GetTickCount() = " << *ret << endl;
+	num_GetTickCount++;
+	OutFile << "GetTickCount() #" << num_GetTickCount << endl;
 	*ret = 0;
+}
+
+VOID modLoadLibrary(char* arg0)
+{
+	cout << arg0 << endl;
 }
 
 /* ===================================================================== */
@@ -135,18 +143,27 @@ VOID Trace(TRACE trace, VOID *v)
 VOID Routine(RTN rtn, VOID *)
 {
 	string routine_name = RTN_Name(rtn);
+
+	// Record all RTNs
+	OutFile << routine_name + "()" << endl;
+	
+	// For selected routines, record more info
 	if (routine_name.find("GetTickCount") != string::npos)
 	{
 		RTN_Open(rtn);
 		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modGetTickCount, 
 					   IARG_FUNCRET_EXITPOINT_REFERENCE,
-					   //IARG_RETURN_REGS, 0,
 					   IARG_END);
 		RTN_Close(rtn);
 	}
 	else if (routine_name.find("LoadLibrary") != string::npos)
 	{
-		cout << "HERE" << RTN_Name(rtn) << endl;
+		RTN_Open(rtn);
+		// Get func args before execution
+		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modLoadLibrary, 
+					   IARG_FUNCARG_ENTRYPOINT_VALUE, 0,  
+					   IARG_END);
+		RTN_Close(rtn);
 	}
 
 }
@@ -154,29 +171,36 @@ VOID Routine(RTN rtn, VOID *)
 // This routine is executed for each image.
 VOID ImageLoad(IMG img, VOID *)
 {
-	for(SYM sym= IMG_RegsymHead(img); SYM_Valid(sym); sym = SYM_Next(sym))
-	{
-		//functions.push_back(make_tuple(SYM_Name(sym), sym));
 
-		if (SYM_Name(sym).find("GetTickCount") != string::npos)
-		{
+	// Get main executable
+	//if (IMG_IsMainExecutable(img))
+	 for(SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
+	 {
+		  for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
+		  {
+			  Routine(rtn, 0);
+		  }
+	 }
 
-			functions.push_back(make_tuple(SYM_Name(sym), sym));
-			cout << SYM_Name(sym) << " IMG: " << IMG_Name(img) <<
-				" ADDR: " << hexstr(SYM_Address(sym)) << endl;
-		}
-	}
 
-    RTN rtn = RTN_FindByName(img, "GetTickCount");
-    //cout << "Here\t" <<endl;//<< RTN_Name(rtn) << endl;
+	//for(SYM sym= IMG_RegsymHead(img); SYM_Valid(sym); sym = SYM_Next(sym))
+	//{
+	//	//functions.push_back(make_tuple(SYM_Name(sym), sym));
 
-    if ( RTN_Valid( rtn ))
-    {
-		OutFile.flush();
-        RTN_Open(rtn);
+	//	if (SYM_Name(sym).find("GetTickCount") != string::npos)
+	//	{
 
-        RTN_Close(rtn);
-    }
+	//		functions.push_back(make_tuple(SYM_Name(sym), sym));
+	//		cout << SYM_Name(sym) << " IMG: " << IMG_Name(img) <<
+	//			" ADDR: " << hexstr(SYM_Address(sym)) << endl;
+	//	}
+	//}
+
+}
+
+VOID ImageUnload(IMG img, VOID *)
+{
+
 }
 
 /*!
@@ -246,10 +270,10 @@ int main(int argc, char *argv[])
         // Register function to be called for every thread before it starts running
         //PIN_AddThreadStartFunction(ThreadStart, 0);
 
-		RTN_AddInstrumentFunction(Routine, 0);
-		//IMG_AddInstrumentFunction(ImageLoad, 0);
+		IMG_AddInstrumentFunction(ImageLoad, 0);
+		IMG_AddUnloadFunction(ImageUnload, 0);
 
-        // Register function to be called when the application exits
+		// Called on exit
         PIN_AddFiniFunction(Fini, 0);
     }
     
