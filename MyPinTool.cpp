@@ -16,6 +16,7 @@
 #include <vector>
 #include <tuple>
 
+
 using namespace std;
 
 /* ================================================================== */
@@ -100,7 +101,24 @@ VOID modGetTickCount(ADDRINT* ret)
 
 VOID modLoadLibrary(char* arg0)
 {
-	cout << arg0 << endl;
+	cout << "LoadLibrary " << arg0 << endl;
+}
+
+// ex. from eXait if(WriteProcessMemory(GetCurrentProcess(), (LPVOID)FuncAddr, &toWrite, sizeof(toWrite), &BytesWritten))
+VOID modWriteProcessMemory(ADDRINT* currentProc, ADDRINT* funcAddr, UINT* writePtr, UINT* sizeofPtr)
+{
+	cout << "WriteProcessMemory " << *currentProc << "\t" 
+								  << *funcAddr << "\t"
+								  << *writePtr << "\t"
+								  << *sizeofPtr << endl;
+
+	// Write 0 bytes
+	*sizeofPtr = 0;
+}
+
+INT fakeWriteProcessMemory()
+{
+	return 1;
 }
 
 /* ===================================================================== */
@@ -163,6 +181,21 @@ VOID Routine(RTN rtn, VOID *)
 		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modLoadLibrary, 
 					   IARG_FUNCARG_ENTRYPOINT_VALUE, 0,  
 					   IARG_END);
+		RTN_Close(rtn);
+	}
+	else if (routine_name.find("WriteProcessMemory") != string::npos)
+	{
+		RTN_Open(rtn);
+
+		// Make it write 0 bytes, a little hamfisted, should allow SOME writes in the future
+		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modWriteProcessMemory, 
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 0,
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 2,
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 3, // bytes to write
+					   IARG_END);
+		
+
 		RTN_Close(rtn);
 	}
 
