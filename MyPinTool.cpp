@@ -116,9 +116,10 @@ VOID modWriteProcessMemory(ADDRINT* currentProc, ADDRINT* funcAddr, UINT* writeP
 	*sizeofPtr = 0;
 }
 
-INT fakeWriteProcessMemory()
+// counter-eXait detect by event handles
+VOID modNTQueryObject(UINT* object_information)
 {
-	return 1;
+	*object_information = NULL;
 }
 
 /* ===================================================================== */
@@ -194,8 +195,14 @@ VOID Routine(RTN rtn, VOID *)
 					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 2,
 					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 3, // bytes to write
 					   IARG_END);
-		
-
+		RTN_Close(rtn);
+	}
+	else if (routine_name.find("NTQueryObject") != string::npos)
+	{
+		RTN_Open(rtn);
+		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modNTQueryObject, 
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 2, // PVOID ObjectInformation
+					   IARG_END);
 		RTN_Close(rtn);
 	}
 
