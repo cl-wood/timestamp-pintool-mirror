@@ -1,0 +1,10 @@
+One way to avoid detection:
+instrument calls like writeprocessmemory to call write 0 bytes. Calls succeed but don't do anything
+
+Another:
+change return values to functions
+PROBLEM functions don't always return nicely (ex. GetProcAddress())
+"Pin tries to find all return instructions, but success is not guaranteed" (https://software.intel.com/sites/landingpage/pintool/docs/49306/Pin/html/index.html)
+
+
+
