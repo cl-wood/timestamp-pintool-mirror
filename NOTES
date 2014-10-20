@@ -1,3 +1,45 @@
+eXait detections:
+
+    -code patterns
+    EnumProcessModules()->search each for a specific code pattern indicative of PIN. To circumvent, watch for memory reads to these/all PIN modules?
+    -PIN event Handles
+    currently NULL out reference to a return struct, more careful way->check fields for "PIN_IPC" 
+    -fsave & fxsave
+    Both execute a FP-instruction, then check EIP. If being JIT compiled, EIP won't be in the processes address space.
+    Uses VirtualQuery() and DllMain()'s 1st arg to get handle to module and runtime MEMORY_BASIC_INFORMATION
+    Watch for EIP reads? Also catch DllMain/VirtualQuery and lie.
+    -INT 2e
+    Also uses VirtualQuery() to get runtime EIP
+    -Ntdll Ptrs
+    GetProcAddress() of "LdrLoadDll", "LdrGetProcedureAddress", "ZwSignalAndWaitForSingleObject", "ZwClose" in Ntdll.dll. Searches through all memory pages for ptrs to these funcs. If all 4 found in one page->DETECTED.
+    Also uses VirtualQuery()
+    -RWX Pages
+    Searches all pages in memory for RWX permissions, if found > 10-> DETECTED.
+    Also uses VirtualQuery(), with MEMORY_BASIC_INFORMATION.Protect to get page perms
+    -Code patterns
+    Also uses VirtualQuery(), MEMORY_BASIC_INFORMATION to search for code patterns
+    -Section Handles
+    uses NTQueryObject()
+    -Section Names
+    uses EnumProcessModules(), then checks each hMods' NT header for each section name for PIN strings
+    -Sysenter
+    PIN newer than 2011 is immune.
+    -EIP
+    Also uses VirtualQuery(), very similar to fsave/fxsave
+    -Ntdll hooks
+    uses GetProcAddress() on 4 ntdll functions, checks for PIN hooks into these
+    Would diverting relevant RTNs to shadow copies of ntdll, and sections, mapped pages, etc. prevent all of these measures???
+    -Pintool exports
+    Uses EnumProcessModules(), then at each module tries to GetProcAddress() of PIN specific modules.
+    -pinvm.dll
+    Uses EnumProcessModules()->GetModuleFileName() to look for "pinvm.dll"
+    -pinvm exports
+    like pintool exports, but searches for different strings.
+
+
+    GetProcAddress() seems very finicky, maybe replace when arguments match what I want?
+
+
 One way to avoid detection:
 instrument calls like writeprocessmemory to call write 0 bytes. Calls succeed but don't do anything
 
@@ -6,5 +48,8 @@ change return values to functions
 PROBLEM functions don't always return nicely (ex. GetProcAddress())
 "Pin tries to find all return instructions, but success is not guaranteed" (https://software.intel.com/sites/landingpage/pintool/docs/49306/Pin/html/index.html)
 
+General pattern of interest:
+    instrument IPOINT_BEFORE -> always catch, but fix is inelegant
+    instrument IPOINT_AFTER  -> can lie about return values/args, but pin might not catch return
 
 

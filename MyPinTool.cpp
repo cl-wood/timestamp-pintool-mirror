@@ -15,7 +15,13 @@
 #include <list>
 #include <vector>
 #include <tuple>
+#include "string.h"
 
+namespace WINDOWS
+{
+	#include <Windows.h>
+	#include <TlHelp32.h>	
+}
 
 using namespace std;
 
@@ -27,7 +33,11 @@ UINT insCount = 0;        //number of dynamically executed instructions
 UINT bblCount = 0;        //number of dynamically executed basic blocks
 UINT threadCount = 0;     //total number of threads, including main thread
 UINT num_GetTickCount = 0;
-BOOL in_main_executable = false;
+
+static int virtualQueryNum = 0;
+bool virtualQuery_replaced = false;
+
+WINDOWS::MEMORY_BASIC_INFORMATION mbi_struct;
 
 ofstream OutFile;
 list<UINT64> counter_checks;
@@ -95,31 +105,151 @@ VOID watch_clocks(UINT64 rdtsc_val)
 VOID modGetTickCount(ADDRINT* ret)
 {
 	num_GetTickCount++;
-	OutFile << "GetTickCount() #" << num_GetTickCount << endl;
+	//OutFile << "GetTickCount() #" << num_GetTickCount << endl;
 	*ret = 0;
 }
 
 VOID modLoadLibrary(char* arg0)
 {
-	cout << "LoadLibrary " << arg0 << endl;
+	//cout << "LoadLibrary " << arg0 << endl;
 }
 
 // ex. from eXait if(WriteProcessMemory(GetCurrentProcess(), (LPVOID)FuncAddr, &toWrite, sizeof(toWrite), &BytesWritten))
 VOID modWriteProcessMemory(ADDRINT* currentProc, ADDRINT* funcAddr, UINT* writePtr, UINT* sizeofPtr)
 {
-	cout << "WriteProcessMemory " << *currentProc << "\t" 
-								  << *funcAddr << "\t"
-								  << *writePtr << "\t"
-								  << *sizeofPtr << endl;
+	//cout << "WriteProcessMemory " << *currentProc << "\t" 
+	//							  << *funcAddr << "\t"
+	//							  << *writePtr << "\t"
+	//							  << *sizeofPtr << endl;
 
 	// Write 0 bytes
 	*sizeofPtr = 0;
 }
 
 // counter-eXait detect by event handles
+// TODO less heavy-handed approach, check to see if objectName.Buffer has "PIN_IPC"
 VOID modNTQueryObject(UINT* object_information)
 {
 	*object_information = NULL;
+}
+
+// TODO doesn't work, possibly b/c GetProcAddress() returns from another function it calls
+// Anything involving procName screws everything up, doesn't even load eXait
+VOID modGetProcAddress(char** procName)
+{
+	//char* tempStr;
+	//strcpy(tempStr, *procName);
+	////printf("GetProcAddress:\t%s\n", *procName);
+	//string s = tempStr;
+	//char * functions[] = {"Pin", "Charm", 
+	//				     //"KiUserApcDispatcher", "KiUserCallbackDispatcher", "KiUserExceptionDispatcher", "LdrInitializeThunk",
+	//						"ClientInt" };
+	//int numberOfFunctions = sizeof(functions) / sizeof(functions[0]);
+
+	//for (int i = 0; i < numberOfFunctions; i++) 
+	//{
+	//	if (s.find(functions[i]) != string::npos)
+	//	{
+	//		cout << s<< endl;
+	//	}
+	//}
+}
+
+VOID modBeforeGetProcAddress(char* procName)
+{
+	string s = procName;
+	if (s.find("Pin") != string::npos || s.find("Charm") != string::npos)
+	{
+		cout << s << endl;
+		//procName = "blahblahblah";
+	}
+}
+
+VOID modEnumProcessModules(WINDOWS::HMODULE hMods[1024], WINDOWS::DWORD* cbNeeded)
+{
+	//for(unsigned int i = 0; i < (*cbNeeded / sizeof(WINDOWS::HMODULE)); i++)
+ //   {
+	//	if(GetProcAddress(hMods[i], "CharmVersionC"))
+	//	{
+	//		cout << "HERE" << endl;
+	//	}
+	//}
+}
+//
+//WINDOWS::FARPROC replacementGetProcAddress(const CONTEXT *context, THREADID tid, AFUNPTR origWatchRtn,
+//	                                     WINDOWS::HMODULE hModule, WINDOWS::LPCSTR lpProcName)
+//	                                     //int hModule, char* lpProcName)
+//{
+//	WINDOWS::FARPROC res;
+//	cout << "GetProcAddress: " << lpProcName << endl;
+//	PIN_CallApplicationFunction(context, tid, CALLINGSTD_DEFAULT, origWatchRtn,
+//                                PIN_PARG(WINDOWS::FARPROC), res,
+//								PIN_PARG(WINDOWS::HMODULE), hModule, 
+//								PIN_PARG(WINDOWS::LPCSTR), lpProcName, 
+//								PIN_PARG_END());
+//
+//
+//	//res = WINDOWS::GetProcAddress((WINDOWS::HMODULE)hModule, lpProcName);
+//
+//	return res;
+//}
+
+VOID modFindWindow(char* procName)
+{
+	// Change to NULL, which is unlikely to be the name of an open window?
+}
+
+VOID modProcessListWalkers(ADDRINT* retPtr, WINDOWS::DWORD pid)
+{
+	cout << *retPtr << "\t" << endl;
+
+	*retPtr = false;
+
+	//cout << processEntry->szExeFile << "\t" << pid << endl;
+	//if (processEntry->th32ProcessID == pid)
+	//{
+	//	cout << "FOUND " << pid << endl;
+	//	//processEntry->th32ProcessID =
+	//}
+}
+
+VOID modBeforeVirtualQuery(WINDOWS::MEMORY_BASIC_INFORMATION* lpBuffer)
+{
+	cout << "BEFORE" << endl;
+	lpBuffer = &mbi_struct;
+
+}
+
+VOID modAfterVirtualQuery()
+{
+	cout << "AFTER" << endl;
+}
+
+static size_t replaceVirtualQuery(CONTEXT* context, AFUNPTR origVirtualQuery,
+								  WINDOWS::LPCVOID lpAddress,
+								  WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer,
+								  WINDOWS::SIZE_T dwLength)
+{
+	size_t res = 0;
+	mbi_struct.Protect = PAGE_EXECUTE_READ;
+	cout << "HERE" << endl;
+
+	PIN_CallApplicationFunction(context, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, origVirtualQuery,
+								PIN_PARG(size_t), &res,
+                                PIN_PARG(WINDOWS::LPCVOID), lpAddress,
+                                PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION), lpBuffer,
+								PIN_PARG(WINDOWS::SIZE_T), dwLength,
+                                PIN_PARG_END());
+	cout << "RES: " << res << endl;
+	WINDOWS::PMEMORY_BASIC_INFORMATION mbi = lpBuffer;
+	cout << "  mbi " << mbi->Protect << endl;
+	cout << "  len " << dwLength << endl;
+
+	//lpBuffer->Protect = mbi_struct.Protect;
+
+	//ret = origVirtualQuery(lpAddress, lpBuffer, dwLength);
+	return res;
 }
 
 /* ===================================================================== */
@@ -144,7 +274,10 @@ VOID Trace(TRACE trace, VOID *v)
 		
 		for (INS ins = BBL_InsHead(bbl); ins != BBL_InsTail(bbl); ins = INS_Next(ins))
 		{
-			OutFile << INS_Disassemble(ins) << endl;
+			//OutFile << INS_Disassemble(ins) << endl;
+
+			// IF reads proc entry list for Pin's pid, change read value
+
 
 			if (INS_IsRDTSC(ins))
 			{
@@ -162,8 +295,7 @@ VOID Trace(TRACE trace, VOID *v)
 VOID Routine(RTN rtn, VOID *)
 {
 	string routine_name = RTN_Name(rtn);
-
-	// Record all RTNs
+   	// Record all RTNs
 	OutFile << routine_name + "()" << endl;
 	
 	// For selected routines, record more info
@@ -174,6 +306,18 @@ VOID Routine(RTN rtn, VOID *)
 					   IARG_FUNCRET_EXITPOINT_REFERENCE,
 					   IARG_END);
 		RTN_Close(rtn);
+	}
+	else if (routine_name.find("FindWindow") != string::npos)
+	{
+		RTN_Open(rtn);
+		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modFindWindow, 
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
+					   IARG_END);
+		RTN_Close(rtn);
+	}
+	else if (routine_name.find("GetProcAddress") != string::npos)
+	{
+
 	}
 	else if (routine_name.find("LoadLibrary") != string::npos)
 	{
@@ -205,37 +349,54 @@ VOID Routine(RTN rtn, VOID *)
 					   IARG_END);
 		RTN_Close(rtn);
 	}
+	//!virtualQuery_replaced && 
+	else if (routine_name.find("VirtualQuery") != string::npos)
+	{
+		cout << "VirtualQuery() #" << virtualQueryNum++ << endl;
+		virtualQuery_replaced = true;
+
+		RTN_Open(rtn);
+		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
+					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
+					   IARG_END);
+		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery, 
+					   //IARG_FUNCRET_EXITPOINT_REFERENCE, 1,
+					   IARG_END);
+		RTN_Close(rtn);
+
+		//PROTO proto = PROTO_Allocate(PIN_PARG(size_t), CALLINGSTD_DEFAULT, "VirtualQuery", 
+		//								   PIN_PARG(WINDOWS::LPCVOID*), 
+		//								   PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION*),
+		//								   PIN_PARG(WINDOWS::SIZE_T*),
+		//								   PIN_PARG_END());
+
+		//RTN_ReplaceSignature(rtn, AFUNPTR(replaceVirtualQuery),
+  //                       IARG_PROTOTYPE, proto,
+  //                       IARG_CONTEXT,
+  //                       IARG_ORIG_FUNCPTR,
+  //                       IARG_FUNCARG_ENTRYPOINT_REFERENCE, 0,
+		//				 IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
+		//				 IARG_FUNCARG_ENTRYPOINT_REFERENCE, 2,
+  //                       IARG_END);
+	}
 
 }
 
 // This routine is executed for each image.
 VOID ImageLoad(IMG img, VOID *)
 {
-
-	// Get main executable
-	//if (IMG_IsMainExecutable(img))
-	 for(SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
-	 {
-		  for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
-		  {
-			  Routine(rtn, 0);
-		  }
-	 }
-
-
-	//for(SYM sym= IMG_RegsymHead(img); SYM_Valid(sym); sym = SYM_Next(sym))
+	//if (IMG_IsMainExecutable(img)) 
 	//{
-	//	//functions.push_back(make_tuple(SYM_Name(sym), sym));
-
-	//	if (SYM_Name(sym).find("GetTickCount") != string::npos)
-	//	{
-
-	//		functions.push_back(make_tuple(SYM_Name(sym), sym));
-	//		cout << SYM_Name(sym) << " IMG: " << IMG_Name(img) <<
-	//			" ADDR: " << hexstr(SYM_Address(sym)) << endl;
-	//	}
-	//}
-
+		cout << "Instrumenting " << IMG_Name(img) << endl;
+		for(SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
+		{
+			for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
+			{
+				string routine_name = RTN_Name(rtn);
+				Routine(rtn, 0);
+			}
+		}
+	
 }
 
 VOID ImageUnload(IMG img, VOID *)
@@ -244,38 +405,12 @@ VOID ImageUnload(IMG img, VOID *)
 }
 
 /*!
- * Increase counter of threads in the application.
- * This function is called for every thread created by the application when it is
- * about to start running (including the root thread).
- * @param[in]   threadIndex     ID assigned by PIN to the new thread
- * @param[in]   ctxt            initial register state for the new thread
- * @param[in]   flags           thread creation flags (OS specific)
- * @param[in]   v               value specified by the tool in the 
- *                              PIN_AddThreadStartFunction function call
- */
-VOID ThreadStart(THREADID threadIndex, CONTEXT *ctxt, INT32 flags, VOID *v)
-{
-    threadCount++;
-}
-
-/*!
  * Print out analysis results.
- * This function is called when the application exits.
- * @param[in]   code            exit code of the application
- * @param[in]   v               value specified by the tool in the 
- *                              PIN_AddFiniFunction function call
  */
 VOID Fini(INT32 code, VOID *v)
 {
 	OutFile.setf(ios::showbase);
     OutFile.close();
-
-    //cout <<  "===============================================" << endl;
-    //cout <<  "MyPinTool analysis results: " << endl;
-    //cout <<  "Number of instructions: " << insCount  << endl;
-    //cout <<  "Number of basic blocks: " << bblCount  << endl;
-    //cout <<  "Number of threads: " << threadCount  << endl;
-    //cout <<  "===============================================" << endl;
 }
 
 /*!
@@ -295,7 +430,6 @@ int main(int argc, char *argv[])
     }
 
 	PIN_InitSymbols();
-    
     string fileName = KnobOutputFile.Value();
 
     //if (!fileName.empty()) { out = new std::ofstream(fileName.c_str());}
@@ -305,7 +439,7 @@ int main(int argc, char *argv[])
     if (KnobCount)
     {
         // Register function to be called to instrument traces
-        //TRACE_AddInstrumentFunction(Trace, 0);
+        TRACE_AddInstrumentFunction(Trace, 0);
 
         // Register function to be called for every thread before it starts running
         //PIN_AddThreadStartFunction(ThreadStart, 0);
@@ -316,7 +450,7 @@ int main(int argc, char *argv[])
 		// Called on exit
         PIN_AddFiniFunction(Fini, 0);
     }
-    
+
     // Start the program, never returns
     PIN_StartProgram();
     
