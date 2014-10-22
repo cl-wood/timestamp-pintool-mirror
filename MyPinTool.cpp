@@ -37,11 +37,16 @@ UINT num_GetTickCount = 0;
 static int virtualQueryNum = 0;
 bool virtualQuery_replaced = false;
 
-WINDOWS::MEMORY_BASIC_INFORMATION mbi_struct;
+WINDOWS::PMEMORY_BASIC_INFORMATION mbi_ptr;
 
 ofstream OutFile;
 list<UINT64> counter_checks;
 vector<tuple<string, SYM> > functions;
+
+
+typedef WINDOWS::SIZE_T (__stdcall* VirtualQueryType)(WINDOWS::LPCVOID lpAddress, 
+													  WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer, 
+													  WINDOWS::SIZE_T dwLength);
 
 
 /* ===================================================================== */
@@ -213,44 +218,50 @@ VOID modProcessListWalkers(ADDRINT* retPtr, WINDOWS::DWORD pid)
 	//}
 }
 
-VOID modBeforeVirtualQuery(WINDOWS::MEMORY_BASIC_INFORMATION* lpBuffer)
+VOID modBeforeVirtualQuery(WINDOWS::MEMORY_BASIC_INFORMATION* lpBuffer, ADDRINT returnIp)
 {
-	cout << "BEFORE" << endl;
-	lpBuffer = &mbi_struct;
-
+	//OutFile << StringFromAddrint(returnIp) << endl;
+	if (returnIp < 0x75000000)
+	{
+		OutFile << StringFromAddrint(returnIp) << endl;
+	}
+	//cout << "BEFORE: " << lpBuffer << endl;
+	//mbi_ptr = lpBuffer;
 }
 
 VOID modAfterVirtualQuery()
 {
-	cout << "AFTER" << endl;
+	//mbi_ptr->Protect = PAGE_EXECUTE_READ;
+	//WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer = (WINDOWS::PMEMORY_BASIC_INFORMATION) ret;
+	cout << ++virtualQueryNum << endl;
+
 }
 
-static size_t replaceVirtualQuery(CONTEXT* context, AFUNPTR origVirtualQuery,
-								  WINDOWS::LPCVOID lpAddress,
-								  WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer,
-								  WINDOWS::SIZE_T dwLength)
+WINDOWS::SIZE_T /*WINAPI*/ replaceVirtualQuery(//VirtualQueryType originalVirtualQuery, 
+											   CONTEXT* pPinContext, 
+									           ADDRINT returnIp,
+											   AFUNPTR originalVirtualQuery,
+											   WINDOWS::LPCVOID lpAddress,
+											   WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer,
+											   WINDOWS::SIZE_T dwLength)
 {
-	size_t res = 0;
-	mbi_struct.Protect = PAGE_EXECUTE_READ;
-	cout << "HERE" << endl;
-
-	PIN_CallApplicationFunction(context, PIN_ThreadId(),
-                                CALLINGSTD_DEFAULT, origVirtualQuery,
+	virtualQueryNum++;
+	cout << virtualQueryNum << endl;
+	WINDOWS::SIZE_T res;
+	PIN_CallApplicationFunction(pPinContext, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, originalVirtualQuery,
 								PIN_PARG(size_t), &res,
                                 PIN_PARG(WINDOWS::LPCVOID), lpAddress,
                                 PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION), lpBuffer,
 								PIN_PARG(WINDOWS::SIZE_T), dwLength,
                                 PIN_PARG_END());
-	cout << "RES: " << res << endl;
-	WINDOWS::PMEMORY_BASIC_INFORMATION mbi = lpBuffer;
-	cout << "  mbi " << mbi->Protect << endl;
-	cout << "  len " << dwLength << endl;
 
-	//lpBuffer->Protect = mbi_struct.Protect;
+	if (lpBuffer->Protect == PAGE_EXECUTE_READWRITE)
+		cout << "HERE" << endl;
 
-	//ret = origVirtualQuery(lpAddress, lpBuffer, dwLength);
 	return res;
 }
+
 
 /* ===================================================================== */
 // Instrumentation callbacks
@@ -292,11 +303,11 @@ VOID Trace(TRACE trace, VOID *v)
 	For each routine called, check to see if the routine is of interest,
 	and if so, insert analysis code.
  */
-VOID Routine(RTN rtn, VOID *)
+VOID Routine(RTN rtn, IMG img, VOID *)
 {
 	string routine_name = RTN_Name(rtn);
    	// Record all RTNs
-	OutFile << routine_name + "()" << endl;
+	//OutFile << routine_name + "()" << endl;
 	
 	// For selected routines, record more info
 	if (routine_name.find("GetTickCount") != string::npos)
@@ -352,31 +363,31 @@ VOID Routine(RTN rtn, VOID *)
 	//!virtualQuery_replaced && 
 	else if (routine_name.find("VirtualQuery") != string::npos)
 	{
-		cout << "VirtualQuery() #" << virtualQueryNum++ << endl;
 		virtualQuery_replaced = true;
-
+		IMG* i = &img;
 		RTN_Open(rtn);
 		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
-					   IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
+					   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+					   IARG_RETURN_IP,
+					   //IARG_ADDRINT, img, // Better way of passing this?
 					   IARG_END);
 		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery, 
-					   //IARG_FUNCRET_EXITPOINT_REFERENCE, 1,
 					   IARG_END);
 		RTN_Close(rtn);
 
 		//PROTO proto = PROTO_Allocate(PIN_PARG(size_t), CALLINGSTD_DEFAULT, "VirtualQuery", 
-		//								   PIN_PARG(WINDOWS::LPCVOID*), 
-		//								   PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION*),
-		//								   PIN_PARG(WINDOWS::SIZE_T*),
+		//								   PIN_PARG(WINDOWS::LPCVOID), 
+		//								   PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION),
+		//								   PIN_PARG(WINDOWS::SIZE_T),
 		//								   PIN_PARG_END());
 
 		//RTN_ReplaceSignature(rtn, AFUNPTR(replaceVirtualQuery),
   //                       IARG_PROTOTYPE, proto,
   //                       IARG_CONTEXT,
   //                       IARG_ORIG_FUNCPTR,
-  //                       IARG_FUNCARG_ENTRYPOINT_REFERENCE, 0,
-		//				 IARG_FUNCARG_ENTRYPOINT_REFERENCE, 1,
-		//				 IARG_FUNCARG_ENTRYPOINT_REFERENCE, 2,
+  //                       IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+		//				 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+		//				 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
   //                       IARG_END);
 	}
 
@@ -385,18 +396,29 @@ VOID Routine(RTN rtn, VOID *)
 // This routine is executed for each image.
 VOID ImageLoad(IMG img, VOID *)
 {
-	//if (IMG_IsMainExecutable(img)) 
-	//{
 		cout << "Instrumenting " << IMG_Name(img) << endl;
 		for(SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
 		{
 			for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
 			{
-				string routine_name = RTN_Name(rtn);
-				Routine(rtn, 0);
+			//RTN rtn = RTN_FindByName(img, "VirtualQuery");
+			//if (RTN_Valid(rtn))
+			//{
+			//	//string routine_name = RTN_Name(rtn);
+			//	//if (routine_name.find("VirtualQuery") != string::npos)
+			//	//{
+			//		RTN_Open(rtn);
+			//		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
+			//		   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+			//		   IARG_END);
+			//		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery, 
+			//		   IARG_END);
+			//		RTN_Close(rtn);
+			//	}
+				Routine(rtn, img, 0);
 			}
 		}
-	
+
 }
 
 VOID ImageUnload(IMG img, VOID *)
@@ -451,8 +473,7 @@ int main(int argc, char *argv[])
         PIN_AddFiniFunction(Fini, 0);
     }
 
-    // Start the program, never returns
-    PIN_StartProgram();
+	PIN_StartProgram();
     
     return 0;
 }
