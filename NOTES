@@ -51,5 +51,6 @@ PROBLEM functions don't always return nicely (ex. GetProcAddress())
 General pattern of interest:
     instrument IPOINT_BEFORE -> always catch, but fix is inelegant
     instrument IPOINT_AFTER  -> can lie about return values/args, but pin might not catch return
+    instrumenting RTNs is fragile because of RTN_Name()s having so many different versions which differ slightly and have different arguments. (Seems especially true with Windows API)
 
 
