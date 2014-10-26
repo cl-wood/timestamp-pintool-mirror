@@ -54,3 +54,9 @@ General pattern of interest:
     instrumenting RTNs is fragile because of RTN_Name()s having so many different versions which differ slightly and have different arguments. (Seems especially true with Windows API)
 
 
+VirtualQuery():
+-Also hard to find when this is called from user space.
+  -Passing return address and checking for <0x75000000 doesn't work.
+  -Can modify any function before, IPOINT_AFTER is not guaranteed to succeed.
+    -also hard/impossible to replace some functions like VirtualQuery()
+

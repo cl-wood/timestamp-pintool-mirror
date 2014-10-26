@@ -10,44 +10,14 @@
 */
 
 #include "pin.H"
-#include <iostream>
-#include <fstream>
-#include <list>
-#include <vector>
-#include <tuple>
-#include "string.h"
 
-namespace WINDOWS
-{
-	#include <Windows.h>
-	#include <TlHelp32.h>	
-}
+// Pintool Header Files
+#include "modifyLoadLibrary.h"
+#include "InsertCalls.h"
 
 using namespace std;
 
-/* ================================================================== */
-// Global variables 
-/* ================================================================== */
-
-UINT insCount = 0;        //number of dynamically executed instructions
-UINT bblCount = 0;        //number of dynamically executed basic blocks
-UINT threadCount = 0;     //total number of threads, including main thread
-UINT num_GetTickCount = 0;
-
-static int virtualQueryNum = 0;
-bool virtualQuery_replaced = false;
-
-WINDOWS::PMEMORY_BASIC_INFORMATION mbi_ptr;
-
-ofstream OutFile;
-list<UINT64> counter_checks;
-vector<tuple<string, SYM> > functions;
-
-
-typedef WINDOWS::SIZE_T (__stdcall* VirtualQueryType)(WINDOWS::LPCVOID lpAddress, 
-													  WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer, 
-													  WINDOWS::SIZE_T dwLength);
-
+extern ofstream OutFile;
 
 /* ===================================================================== */
 // Command line switches
@@ -59,250 +29,37 @@ KNOB<BOOL>   KnobCount(KNOB_MODE_WRITEONCE,  "pintool",
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
     "o", "analysis.out", "specify output file name");
 
-/* ===================================================================== */
-// Utilities
-/* ===================================================================== */
-
 /*!
  *  Print out help message.
  */
 INT32 Usage()
 {
-    cerr << "This tool prints out the number of dynamically executed " << endl <<
-            "instructions, basic blocks and threads in the application." << endl << endl;
-
+    cerr << "This tool does stuff." << endl;
     cerr << KNOB_BASE::StringKnobSummary() << endl;
-
     return -1;
 }
-
-/* ===================================================================== */
-// Analysis routines
-/* ===================================================================== */
-
-/*!
- * Increase counter of the executed basic blocks and instructions.
- * This function is called for every basic block when it is about to be executed.
- * @param[in]   numInstInBbl    number of instructions in the basic block
- * @note use atomic operations for multi-threaded applications
- */
-VOID CountBbl(UINT numInstInBbl)
-{
-    bblCount++;
-    insCount += numInstInBbl;
-}
-
-VOID printIns(string insDis)
-{
-	OutFile << insDis << endl;
-}
-
-VOID watch_clocks(UINT64 rdtsc_val)
-{
-	counter_checks.push_back(rdtsc_val);
-	//cout << "rdtsc reads:\t" << rdtsc_val << endl;
-}
-
-
-/*
-	Always change the return value of GetTickCount() to 0.
- */
-VOID modGetTickCount(ADDRINT* ret)
-{
-	num_GetTickCount++;
-	//OutFile << "GetTickCount() #" << num_GetTickCount << endl;
-	*ret = 0;
-}
-
-VOID modLoadLibrary(char* arg0)
-{
-	//cout << "LoadLibrary " << arg0 << endl;
-}
-
-// ex. from eXait if(WriteProcessMemory(GetCurrentProcess(), (LPVOID)FuncAddr, &toWrite, sizeof(toWrite), &BytesWritten))
-VOID modWriteProcessMemory(ADDRINT* currentProc, ADDRINT* funcAddr, UINT* writePtr, UINT* sizeofPtr)
-{
-	//cout << "WriteProcessMemory " << *currentProc << "\t" 
-	//							  << *funcAddr << "\t"
-	//							  << *writePtr << "\t"
-	//							  << *sizeofPtr << endl;
-
-	// Write 0 bytes
-	*sizeofPtr = 0;
-}
-
-// counter-eXait detect by event handles
-// TODO less heavy-handed approach, check to see if objectName.Buffer has "PIN_IPC"
-VOID modNTQueryObject(UINT* object_information)
-{
-	*object_information = NULL;
-}
-
-// TODO doesn't work, possibly b/c GetProcAddress() returns from another function it calls
-// Anything involving procName screws everything up, doesn't even load eXait
-VOID modGetProcAddress(char** procName)
-{
-	//char* tempStr;
-	//strcpy(tempStr, *procName);
-	////printf("GetProcAddress:\t%s\n", *procName);
-	//string s = tempStr;
-	//char * functions[] = {"Pin", "Charm", 
-	//				     //"KiUserApcDispatcher", "KiUserCallbackDispatcher", "KiUserExceptionDispatcher", "LdrInitializeThunk",
-	//						"ClientInt" };
-	//int numberOfFunctions = sizeof(functions) / sizeof(functions[0]);
-
-	//for (int i = 0; i < numberOfFunctions; i++) 
-	//{
-	//	if (s.find(functions[i]) != string::npos)
-	//	{
-	//		cout << s<< endl;
-	//	}
-	//}
-}
-
-VOID modBeforeGetProcAddress(char* procName)
-{
-	string s = procName;
-	if (s.find("Pin") != string::npos || s.find("Charm") != string::npos)
-	{
-		cout << s << endl;
-		//procName = "blahblahblah";
-	}
-}
-
-VOID modEnumProcessModules(WINDOWS::HMODULE hMods[1024], WINDOWS::DWORD* cbNeeded)
-{
-	//for(unsigned int i = 0; i < (*cbNeeded / sizeof(WINDOWS::HMODULE)); i++)
- //   {
-	//	if(GetProcAddress(hMods[i], "CharmVersionC"))
-	//	{
-	//		cout << "HERE" << endl;
-	//	}
-	//}
-}
-//
-//WINDOWS::FARPROC replacementGetProcAddress(const CONTEXT *context, THREADID tid, AFUNPTR origWatchRtn,
-//	                                     WINDOWS::HMODULE hModule, WINDOWS::LPCSTR lpProcName)
-//	                                     //int hModule, char* lpProcName)
-//{
-//	WINDOWS::FARPROC res;
-//	cout << "GetProcAddress: " << lpProcName << endl;
-//	PIN_CallApplicationFunction(context, tid, CALLINGSTD_DEFAULT, origWatchRtn,
-//                                PIN_PARG(WINDOWS::FARPROC), res,
-//								PIN_PARG(WINDOWS::HMODULE), hModule, 
-//								PIN_PARG(WINDOWS::LPCSTR), lpProcName, 
-//								PIN_PARG_END());
-//
-//
-//	//res = WINDOWS::GetProcAddress((WINDOWS::HMODULE)hModule, lpProcName);
-//
-//	return res;
-//}
-
-VOID modFindWindow(char* procName)
-{
-	// Change to NULL, which is unlikely to be the name of an open window?
-}
-
-VOID modProcessListWalkers(ADDRINT* retPtr, WINDOWS::DWORD pid)
-{
-	cout << *retPtr << "\t" << endl;
-
-	*retPtr = false;
-
-	//cout << processEntry->szExeFile << "\t" << pid << endl;
-	//if (processEntry->th32ProcessID == pid)
-	//{
-	//	cout << "FOUND " << pid << endl;
-	//	//processEntry->th32ProcessID =
-	//}
-}
-
-VOID modBeforeVirtualQuery(WINDOWS::MEMORY_BASIC_INFORMATION* lpBuffer, ADDRINT returnIp)
-{
-	//OutFile << StringFromAddrint(returnIp) << endl;
-	if (returnIp < 0x75000000)
-	{
-		OutFile << StringFromAddrint(returnIp) << endl;
-	}
-	//cout << "BEFORE: " << lpBuffer << endl;
-	//mbi_ptr = lpBuffer;
-}
-
-VOID modAfterVirtualQuery()
-{
-	//mbi_ptr->Protect = PAGE_EXECUTE_READ;
-	//WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer = (WINDOWS::PMEMORY_BASIC_INFORMATION) ret;
-	cout << ++virtualQueryNum << endl;
-
-}
-
-WINDOWS::SIZE_T /*WINAPI*/ replaceVirtualQuery(//VirtualQueryType originalVirtualQuery, 
-											   CONTEXT* pPinContext, 
-									           ADDRINT returnIp,
-											   AFUNPTR originalVirtualQuery,
-											   WINDOWS::LPCVOID lpAddress,
-											   WINDOWS::PMEMORY_BASIC_INFORMATION lpBuffer,
-											   WINDOWS::SIZE_T dwLength)
-{
-	virtualQueryNum++;
-	cout << virtualQueryNum << endl;
-	WINDOWS::SIZE_T res;
-	PIN_CallApplicationFunction(pPinContext, PIN_ThreadId(),
-                                CALLINGSTD_DEFAULT, originalVirtualQuery,
-								PIN_PARG(size_t), &res,
-                                PIN_PARG(WINDOWS::LPCVOID), lpAddress,
-                                PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION), lpBuffer,
-								PIN_PARG(WINDOWS::SIZE_T), dwLength,
-                                PIN_PARG_END());
-
-	if (lpBuffer->Protect == PAGE_EXECUTE_READWRITE)
-		cout << "HERE" << endl;
-
-	return res;
-}
-
 
 /* ===================================================================== */
 // Instrumentation callbacks
 /* ===================================================================== */
 
-/*!
- * Insert call to the CountBbl() analysis routine before every basic block 
- * of the trace.
- * This function is called every time a new trace is encountered.
- * @param[in]   trace    trace to be instrumented
- * @param[in]   v        value specified by the tool in the TRACE_AddInstrumentFunction
- *                       function call
- */
 VOID Trace(TRACE trace, VOID *v)
 {
-    // Visit every basic block in the trace
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
     {
-        // Insert a call to CountBbl() before every basic bloc, passing the number of instructions
         BBL_InsertCall(bbl, IPOINT_BEFORE, (AFUNPTR)CountBbl, IARG_UINT32, BBL_NumIns(bbl), IARG_END);
-		
 		for (INS ins = BBL_InsHead(bbl); ins != BBL_InsTail(bbl); ins = INS_Next(ins))
 		{
-			//OutFile << INS_Disassemble(ins) << endl;
-
-			// IF reads proc entry list for Pin's pid, change read value
-
-
+			// TODO IF reads proc entry list for Pin's pid, change read value
 			if (INS_IsRDTSC(ins))
 			{
 				INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)watch_clocks, IARG_TSC, IARG_END);
 			}
 		}
-	
 	}
 }
 
-/*
-	For each routine called, check to see if the routine is of interest,
-	and if so, insert analysis code.
- */
+
 VOID Routine(RTN rtn, IMG img, VOID *)
 {
 	string routine_name = RTN_Name(rtn);
@@ -328,16 +85,25 @@ VOID Routine(RTN rtn, IMG img, VOID *)
 	}
 	else if (routine_name.find("GetProcAddress") != string::npos)
 	{
-
+		
 	}
-	else if (routine_name.find("LoadLibrary") != string::npos)
+	else if (routine_name.find("LoadLibrary") != string::npos
+		     //&& routine_name.find("LoadLibraryA") == string::npos
+		     //&& routine_name.find("LoadLibraryEx") == string::npos
+		     && routine_name.find("LoadLibraryW") == string::npos)
 	{
-		RTN_Open(rtn);
-		// Get func args before execution
-		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modLoadLibrary, 
-					   IARG_FUNCARG_ENTRYPOINT_VALUE, 0,  
-					   IARG_END);
-		RTN_Close(rtn);
+		//cout << routine_name << endl;
+		//PROTO proto = PROTO_Allocate(PIN_PARG(WINDOWS::HMODULE), CALLINGSTD_DEFAULT, "LoadLibrary", 
+		//							 PIN_PARG(WINDOWS::LPCTSTR), 
+		//							 PIN_PARG_END());
+
+		//RTN_ReplaceSignature(rtn, AFUNPTR(replaceLoadLibrary),
+  //                       IARG_PROTOTYPE, proto,
+  //                       IARG_CONTEXT,
+  //                       IARG_ORIG_FUNCPTR,
+  //                       IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+  //                       IARG_END);
+		//PROTO_Free(proto);
 	}
 	else if (routine_name.find("WriteProcessMemory") != string::npos)
 	{
@@ -362,36 +128,73 @@ VOID Routine(RTN rtn, IMG img, VOID *)
 	}
 	//!virtualQuery_replaced && 
 	else if (routine_name.find("VirtualQuery") != string::npos)
+			 //&& routine_name.find("VirtualQueryEx") == string::npos)
 	{
-		virtualQuery_replaced = true;
-		IMG* i = &img;
-		RTN_Open(rtn);
-		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
-					   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
-					   IARG_RETURN_IP,
-					   //IARG_ADDRINT, img, // Better way of passing this?
-					   IARG_END);
-		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery, 
-					   IARG_END);
-		RTN_Close(rtn);
+		//PROTO proto = PROTO_Allocate(PIN_PARG(WINDOWS::SIZE_T), CALLINGSTD_DEFAULT, "VirtualQueryEx", 
+		//							 PIN_PARG(WINDOWS::HANDLE),
+		//							 PIN_PARG(WINDOWS::LPCVOID), 
+		//						     PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION),
+		//							 PIN_PARG(WINDOWS::SIZE_T),
+		//							 PIN_PARG_END());
 
-		//PROTO proto = PROTO_Allocate(PIN_PARG(size_t), CALLINGSTD_DEFAULT, "VirtualQuery", 
-		//								   PIN_PARG(WINDOWS::LPCVOID), 
-		//								   PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION),
-		//								   PIN_PARG(WINDOWS::SIZE_T),
-		//								   PIN_PARG_END());
-
-		//RTN_ReplaceSignature(rtn, AFUNPTR(replaceVirtualQuery),
+		//RTN_ReplaceSignature(rtn, AFUNPTR(replaceVirtualQueryEx),
   //                       IARG_PROTOTYPE, proto,
   //                       IARG_CONTEXT,
   //                       IARG_ORIG_FUNCPTR,
   //                       IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
 		//				 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
 		//				 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+		//				 IARG_FUNCARG_ENTRYPOINT_VALUE, 3,
   //                       IARG_END);
+		//PROTO_Free(proto);
 	}
 
 }
+
+
+
+VOID checkRetAddr()
+{
+
+}
+
+VOID WatchReturnIps(INS ins, VOID *)
+{
+	if (INS_Valid(ins) && INS_IsRet(ins))
+	{
+
+		// TODO working on instrumenting LoadLibrary since replace seems unreliable.
+		INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)checkRetAddr, 
+			           IARG_END);
+
+		ADDRINT addr = INS_Address(ins);
+		//OutFile << StringFromAddrint(addr) << endl;
+		for (int i = 0; i < loadLibraryReturnAddresses.size(); i++)
+		{
+			if (addr == loadLibraryReturnAddresses[i])
+			{
+				OutFile << "MAYBE" << endl;
+			}
+		}
+	}
+}
+
+				//PROTO proto = PROTO_Allocate(PIN_PARG(WINDOWS::SIZE_T), CALLINGSTD_DEFAULT, "VirtualQuery", 
+				//					 PIN_PARG(WINDOWS::LPCVOID), 
+				//				     PIN_PARG(WINDOWS::PMEMORY_BASIC_INFORMATION),
+				//					 PIN_PARG(WINDOWS::SIZE_T),
+				//					 PIN_PARG_END());
+
+				//RTN_ReplaceSignature(rtn, AFUNPTR(replaceVirtualQuery),
+    //                     IARG_PROTOTYPE, proto,
+    //                     IARG_CONTEXT,
+    //                     IARG_ORIG_FUNCPTR,
+    //                     IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+				//		 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+				//		 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+    //                     IARG_END);
+				//PROTO_Free(proto);
+
 
 // This routine is executed for each image.
 VOID ImageLoad(IMG img, VOID *)
@@ -399,24 +202,45 @@ VOID ImageLoad(IMG img, VOID *)
 		cout << "Instrumenting " << IMG_Name(img) << endl;
 		for(SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec))
 		{
-			for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
+			RTN rtn = RTN_FindByName(img, "VirtualQuery");
+			if (RTN_Valid(rtn))
 			{
-			//RTN rtn = RTN_FindByName(img, "VirtualQuery");
-			//if (RTN_Valid(rtn))
-			//{
-			//	//string routine_name = RTN_Name(rtn);
-			//	//if (routine_name.find("VirtualQuery") != string::npos)
-			//	//{
-			//		RTN_Open(rtn);
-			//		RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
-			//		   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
-			//		   IARG_END);
-			//		RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery, 
-			//		   IARG_END);
-			//		RTN_Close(rtn);
-			//	}
-				Routine(rtn, img, 0);
+				// Instrument first and last instruction
+				RTN_Open(rtn);
+
+				WINDOWS::PMEMORY_BASIC_INFORMATION pass_mbi;
+
+				RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
+					   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+					   IARG_PTR, &pass_mbi,
+					   IARG_END);
+				//INS_InsertCall(RTN_InsHead(rtn), IPOINT_BEFORE, (AFUNPTR) firstInsVirtualQuery,
+				//			   IARG_REG_VALUE, REG_EAX,
+				//			   IARG_END);
+
+				INS_InsertCall(RTN_InsTail(rtn), IPOINT_BEFORE, (AFUNPTR) lastInsVirtualQuery,
+							   IARG_CALL_ORDER, CALL_ORDER_LAST,
+							   IARG_PTR, &pass_mbi,
+							   
+							   IARG_END);
+
+
+				RTN_Close(rtn);
+
+				//string routine_name = RTN_Name(rtn);
+					//RTN_Open(rtn);
+					//RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)modBeforeVirtualQuery, 
+					//   IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+					//   IARG_RETURN_IP,
+					//   IARG_END);
+					//RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)modAfterVirtualQuery,
+					//   IARG_END);
+					//RTN_Close(rtn);
 			}
+		//for(RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn))
+		//	{
+		//		//Routine(rtn, img, 0);
+		//	}
 		}
 
 }
@@ -465,6 +289,8 @@ int main(int argc, char *argv[])
 
         // Register function to be called for every thread before it starts running
         //PIN_AddThreadStartFunction(ThreadStart, 0);
+
+		INS_AddInstrumentFunction(WatchReturnIps, 0);
 
 		IMG_AddInstrumentFunction(ImageLoad, 0);
 		IMG_AddUnloadFunction(ImageUnload, 0);
